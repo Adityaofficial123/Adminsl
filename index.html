@@ -9,7 +9,7 @@
   <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
-  <script src="firebase.js"></script>
+  
   <link rel="stylesheet" href="style.css" />
   <style>
     .glass-effect {
@@ -162,6 +162,22 @@
       <button id="load-messages-btn" class="btn-primary text-white px-6 py-3 rounded-lg font-semibold hover:shadow-lg mb-4">Load Messages</button>
       <div id="messages-table-container"></div>
     </div>
+
+    <!-- Reviews Management Section -->
+    <div id="reviews" class="glass-effect rounded-2xl p-6 mb-8 shadow-elegant">
+      <h2 class="text-2xl font-bold text-gray-800 mb-6">⭐ Reviews Management</h2>
+      <div class="flex items-center justify-between mb-4">
+        <div class="flex gap-2">
+          <button id="rev-filter-all" class="px-4 py-2 rounded-lg border bg-white">All</button>
+          <button id="rev-filter-pending" class="px-4 py-2 rounded-lg border bg-white">Pending</button>
+          <button id="rev-filter-approved" class="px-4 py-2 rounded-lg border bg-white">Approved</button>
+        </div>
+        <button id="rev-load-btn" class="btn-primary text-white px-6 py-3 rounded-lg font-semibold hover:shadow-lg">Load Reviews</button>
+      </div>
+      <div id="reviews-table-container" class="text-gray-800">
+        <!-- Reviews table will render here -->
+      </div>
+    </div>
     <!-- Course Search & Load Section -->
     <div class="glass-effect rounded-2xl p-6 mb-8 shadow-elegant">
       <h2 class="text-2xl font-bold text-gray-800 mb-4">🔍 Load Existing Course</h2>
@@ -247,6 +263,17 @@
             <input type="text" id="course-objectives" placeholder="Learn Python basics, Understand data structures, etc."
                    class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent">
           </div>
+          <!-- Course Content (Intro) -->
+          <div class="md:col-span-2">
+            <label class="block text-sm font-medium text-gray-700 mb-2">Intro Video URL (optional)</label>
+            <input type="url" id="intro-video-url" placeholder="https://... (YouTube/Drive/Cloudinary)"
+                   class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent">
+          </div>
+          <div class="md:col-span-2">
+            <label class="block text-sm font-medium text-gray-700 mb-2">Syllabus/ Curriculum Document URL (optional)</label>
+            <input type="url" id="syllabus-doc-url" placeholder="https://... (PDF/Doc Link)"
+                   class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent">
+          </div>
           <div class="flex items-center">
             <input type="checkbox" id="course-featured" class="h-4 w-4 text-purple-600 rounded border-gray-300 focus:ring-2 focus:ring-purple-500">
             <label for="course-featured" class="ml-2 text-sm font-medium text-gray-700">Featured Course</label>
@@ -301,6 +328,12 @@
       enrollBtn.classList.remove('opacity-50', 'cursor-not-allowed');
       paymentsBtn.disabled = false;
       paymentsBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+      // Enable reviews load button
+      const revLoadBtn = document.getElementById('rev-load-btn');
+      if (revLoadBtn) {
+        revLoadBtn.disabled = false;
+        revLoadBtn.classList.remove('opacity-50','cursor-not-allowed');
+      }
     }
 
     // Wait for Firebase to be ready
@@ -316,6 +349,142 @@
     enrollBtn.onclick = loadEnrollments;
 
     paymentsBtn.onclick = loadPaymentRequests;
+
+    // ===== Reviews Management =====
+    const revLoadBtn = document.getElementById('rev-load-btn');
+    const revContainer = document.getElementById('reviews-table-container');
+    const revFilterAll = document.getElementById('rev-filter-all');
+    const revFilterPending = document.getElementById('rev-filter-pending');
+    const revFilterApproved = document.getElementById('rev-filter-approved');
+    let currentRevFilter = 'all';
+
+    if (revLoadBtn) revLoadBtn.addEventListener('click', () => loadReviews());
+    if (revFilterAll) revFilterAll.addEventListener('click', () => { currentRevFilter = 'all'; highlightRevFilter(); loadReviews(); });
+    if (revFilterPending) revFilterPending.addEventListener('click', () => { currentRevFilter = 'pending'; highlightRevFilter(); loadReviews(); });
+    if (revFilterApproved) revFilterApproved.addEventListener('click', () => { currentRevFilter = 'approved'; highlightRevFilter(); loadReviews(); });
+
+    function highlightRevFilter() {
+      const btns = [revFilterAll, revFilterPending, revFilterApproved];
+      btns.forEach(btn => btn && btn.classList.remove('bg-purple-600','text-white'));
+      if (currentRevFilter === 'all' && revFilterAll) revFilterAll.classList.add('bg-purple-600','text-white');
+      if (currentRevFilter === 'pending' && revFilterPending) revFilterPending.classList.add('bg-purple-600','text-white');
+      if (currentRevFilter === 'approved' && revFilterApproved) revFilterApproved.classList.add('bg-purple-600','text-white');
+    }
+
+    async function loadReviews() {
+      try {
+        if (!window.firebaseServicesInitialized || !window.db) {
+          revContainer.innerHTML = '<div class="text-gray-600">Firebase not ready.</div>';
+          return;
+        }
+        revContainer.innerHTML = '<div class="text-gray-600">Loading...</div>';
+        let q = window.db().collectionGroup('reviews');
+        if (currentRevFilter === 'pending') {
+          q = q.where('approved','==', false);
+        } else if (currentRevFilter === 'approved') {
+          q = q.where('approved','==', true);
+        }
+        // Avoid server-side orderBy to prevent index requirement; sort client-side instead
+        const snap = await q.get();
+        const rows = [];
+        const courseIds = new Set();
+        snap.forEach(doc => {
+          const d = doc.data();
+          const courseRef = doc.ref.parent.parent; // parent course doc
+          const cId = courseRef ? courseRef.id : '';
+          if (cId) courseIds.add(cId);
+          rows.push({ id: doc.id, courseId: cId, ...d });
+        });
+
+        // Sort client-side by createdAt desc if available
+        rows.sort((a,b) => {
+          const ta = a.createdAt && a.createdAt.toDate ? a.createdAt.toDate().getTime() : 0;
+          const tb = b.createdAt && b.createdAt.toDate ? b.createdAt.toDate().getTime() : 0;
+          return tb - ta;
+        });
+
+        // Fetch course titles for mapping
+        const courseMap = {};
+        await Promise.all(Array.from(courseIds).map(async (cid) => {
+          try {
+            const cdoc = await window.db().collection('courses').doc(cid).get();
+            courseMap[cid] = cdoc.exists ? (cdoc.data().title || cid) : cid;
+          } catch {}
+        }));
+
+        // attach titles
+        rows.forEach(r => { r.courseTitle = courseMap[r.courseId] || r.courseId || 'Unknown'; });
+
+        renderReviewsTable(rows);
+      } catch (e) {
+        console.error('Failed to load reviews', e);
+        revContainer.innerHTML = '<div class="text-red-600">Failed to load reviews.</div>';
+      }
+    }
+
+    function renderReviewsTable(rows) {
+      if (!rows || rows.length === 0) {
+        revContainer.innerHTML = '<div class="text-gray-600">No reviews found.</div>';
+        return;
+      }
+      const html = `
+        <div class="overflow-x-auto">
+          <table class="min-w-full divide-y divide-gray-200">
+            <thead class="bg-gray-50">
+              <tr>
+                <th class="px-4 py-2 text-left text-xs font-medium text-gray-700 uppercase tracking-wider">Course</th>
+                <th class="px-4 py-2 text-left text-xs font-medium text-gray-700 uppercase tracking-wider">User</th>
+                <th class="px-4 py-2 text-left text-xs font-medium text-gray-700 uppercase tracking-wider">Rating</th>
+                <th class="px-4 py-2 text-left text-xs font-medium text-gray-700 uppercase tracking-wider">Text</th>
+                <th class="px-4 py-2 text-left text-xs font-medium text-gray-700 uppercase tracking-wider">Date</th>
+                <th class="px-4 py-2 text-left text-xs font-medium text-gray-700 uppercase tracking-wider">Approved</th>
+              </tr>
+            </thead>
+            <tbody class="bg-white divide-y divide-gray-200 text-gray-800">
+              ${rows.map(r => {
+                const dateStr = r.createdAt && r.createdAt.toDate ? r.createdAt.toDate().toLocaleString() : '';
+                const text = escapeHtml(r.text || '');
+                const user = escapeHtml(r.userName || r.userId || 'User');
+                const rating = Number(r.rating) || 0;
+                return `
+                  <tr class="table-row">
+                    <td class="px-4 py-2 text-sm"><div class="font-medium">${escapeHtml(r.courseTitle)}</div><div class="text-xs text-gray-500">${escapeHtml(r.courseId)}</div></td>
+                    <td class="px-4 py-2 text-sm">${user}</td>
+                    <td class="px-4 py-2 text-sm">${rating.toFixed(1)}</td>
+                    <td class="px-4 py-2 text-sm max-w-xl whitespace-pre-wrap">${text}</td>
+                    <td class="px-4 py-2 text-sm">${dateStr}</td>
+                    <td class="px-4 py-2 text-sm">
+                      <label class="inline-flex items-center gap-2">
+                        <input type="checkbox" ${r.approved ? 'checked' : ''} onchange="toggleReviewApproval('${r.courseId}','${r.id}', this.checked)" />
+                        <span>${r.approved ? 'Approved' : 'Pending'}</span>
+                      </label>
+                    </td>
+                  </tr>`;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>`;
+      revContainer.innerHTML = html;
+    }
+
+    async function toggleReviewApproval(courseId, reviewId, approved) {
+      try {
+        await window.db().collection('courses').doc(courseId).collection('reviews').doc(reviewId).update({ approved });
+        // Refresh current list to reflect status text
+        loadReviews();
+      } catch (e) {
+        console.error('Failed to update approval', e);
+        alert('Failed to update approval status.');
+      }
+    }
+
+    function escapeHtml(str) {
+      const map = { '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;' };
+      return String(str || '').replace(/[&<>"']/g, ch => map[ch]);
+    }
+
+    // Expose for inline handler used in table
+    window.toggleReviewApproval = toggleReviewApproval;
 
     // ===== Add Lecture to Existing Course (Firestore) =====
     const alCourseIdEl = document.getElementById('al-course-id');
@@ -564,9 +733,20 @@
           return;
         }
         
-        console.log('Loading payment requests from Realtime Database...');
-        // Fetch pending enrollments from RTDB
-        const requests = await window.DatabaseAPI.getAllPendingEnrollmentsOnce();
+        console.log('Loading payment requests from Firestore enrollment-proofs...');
+        // Fetch pending enrollment proofs from Firestore
+        const enrollmentProofsSnap = await firebase.firestore().collection('enrollment-proofs')
+          .where('status', '==', 'pending')
+          .get();
+        
+        const requests = [];
+        enrollmentProofsSnap.docs.forEach(doc => {
+          const data = doc.data();
+          requests.push({
+            id: doc.id,
+            ...data
+          });
+        });
         console.log('Found pending requests:', requests.length);
         
         if (requests.length === 0) {
@@ -614,7 +794,7 @@
     // Approve payment: enroll user and mark request as approved
     async function approvePaymentRequest(pendingId) {
       try {
-        if (!window.DatabaseAPI) {
+        if (!window.firebaseServicesInitialized) {
           alert('Firebase not ready');
           return;
         }
@@ -622,7 +802,32 @@
         const confirmed = confirm('Are you sure you want to approve this payment request?');
         if (!confirmed) return;
         
-        await window.DatabaseAPI.approvePaymentRequest(pendingId);
+        // Get the enrollment proof document
+        const proofDoc = await firebase.firestore().collection('enrollment-proofs').doc(pendingId).get();
+        if (!proofDoc.exists) {
+          alert('Payment request not found');
+          return;
+        }
+        
+        const proofData = proofDoc.data();
+        
+        // Update status to approved
+        await firebase.firestore().collection('enrollment-proofs').doc(pendingId).update({
+          status: 'approved',
+          approvedAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
+        
+        // Create enrollment in Firestore
+        await firebase.firestore().collection('enrollments').add({
+          userId: proofData.userId,
+          courseId: proofData.courseId,
+          userName: proofData.userName,
+          userEmail: proofData.userEmail,
+          enrolledAt: firebase.firestore.FieldValue.serverTimestamp(),
+          progress: {},
+          status: 'active'
+        });
+        
         alert('Payment request approved successfully!');
         loadPaymentRequests(); // Refresh the list
       } catch (err) {
@@ -634,7 +839,7 @@
     // Reject payment: mark request as rejected
     async function rejectPaymentRequest(pendingId) {
       try {
-        if (!window.DatabaseAPI) {
+        if (!window.firebaseServicesInitialized) {
           alert('Firebase not ready');
           return;
         }
@@ -642,7 +847,12 @@
         const confirmed = confirm('Are you sure you want to reject this payment request?');
         if (!confirmed) return;
         
-        await window.DatabaseAPI.rejectPaymentRequest(pendingId);
+        // Update status to rejected in Firestore
+        await firebase.firestore().collection('enrollment-proofs').doc(pendingId).update({
+          status: 'rejected',
+          rejectedAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
+        
         alert('Payment request rejected successfully!');
         loadPaymentRequests(); // Refresh the list
       } catch (err) {
@@ -886,6 +1096,9 @@
         document.getElementById('course-price').value = data.price || 0;
         document.getElementById('course-objectives').value = (data.objectives || []).join(', ');
         document.getElementById('course-featured').checked = !!data.featured;
+        // Intro/Syllabus
+        document.getElementById('intro-video-url').value = data.introVideoUrl || '';
+        document.getElementById('syllabus-doc-url').value = data.syllabusDocUrl || '';
 
         // Load days structure
         if (data.modules && data.modules.length > 0) {
@@ -928,6 +1141,8 @@
       const price = parseFloat(document.getElementById('course-price').value);
       const objectives = document.getElementById('course-objectives').value.split(',').map(o => o.trim()).filter(Boolean);
       const featured = document.getElementById('course-featured').checked;
+      const introVideoUrl = document.getElementById('intro-video-url').value.trim();
+      const syllabusDocUrl = document.getElementById('syllabus-doc-url').value.trim();
 
       // Validation
       if (!title || !description || !instructor || !image || !category || !level || !duration || isNaN(price)) {
@@ -950,6 +1165,7 @@
         const course = {
           title, description, instructor, image, instructorImage, instructorBio, category, level, duration, price,
           objectives, featured,
+          introVideoUrl, syllabusDocUrl,
           modules: days.map(day => ({
             title: day.title,
             lectures: day.lectures || [],
@@ -975,6 +1191,8 @@
     function resetForm() {
       document.getElementById('course-form').reset();
       document.getElementById('search-course-id').value = '';
+      document.getElementById('intro-video-url').value = '';
+      document.getElementById('syllabus-doc-url').value = '';
       days = [{
         title: 'Day 1',
         lectures: [],
