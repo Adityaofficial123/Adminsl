@@ -270,6 +270,13 @@
                    class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent">
           </div>
           <div class="md:col-span-2">
+            <label class="block text-sm font-medium text-gray-700 mb-2">Intro Video URL 2 (optional)</label>
+            <input type="url" id="intro-video-url-2" placeholder="https://... (YouTube/Drive/Cloudinary)"
+                   class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent">
+            <p class="mt-1 text-xs text-gray-500">Tip: You can paste an Internet Archive item link like
+              <span class="font-mono">https://archive.org/details/IDENTIFIER</span>. We'll auto-convert it to a direct MP4/WebM if available for a clean native player.</p>
+          </div>
+          <div class="md:col-span-2">
             <label class="block text-sm font-medium text-gray-700 mb-2">Syllabus/ Curriculum Document URL (optional)</label>
             <input type="url" id="syllabus-doc-url" placeholder="https://... (PDF/Doc Link)"
                    class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent">
@@ -286,12 +293,14 @@
     <div class="glass-effect rounded-2xl p-6 mb-8 shadow-elegant">
       <div class="flex justify-between items-center mb-6">
         <h2 class="text-2xl font-bold text-gray-800">📅 Course Days Management</h2>
-        <button id="add-day-btn" class="btn-primary text-white px-6 py-3 rounded-lg font-semibold hover:shadow-lg">
-          + Add New Day
-        </button>
       </div>
       <div id="days-container" class="space-y-6">
         <!-- Days will be rendered here -->
+      </div>
+      <div class="mt-6 flex justify-end">
+        <button id="add-day-btn" class="btn-primary text-white px-6 py-3 rounded-lg font-semibold hover:shadow-lg">
+          + Add New Day
+        </button>
       </div>
     </div>
 
@@ -980,6 +989,18 @@
         notes: []
       });
       renderDays();
+      // After rendering, scroll to and focus the newly added day
+      requestAnimationFrame(() => {
+        const container = document.getElementById('days-container');
+        const last = container ? container.lastElementChild : null;
+        if (last) {
+          last.scrollIntoView({ behavior: 'smooth', block: 'end' });
+          const input = last.querySelector('input[type="text"]');
+          if (input) {
+            input.focus({ preventScroll: true });
+          }
+        }
+      });
     }
 
     function removeDay(dayIdx) {
@@ -1098,6 +1119,7 @@
         document.getElementById('course-featured').checked = !!data.featured;
         // Intro/Syllabus
         document.getElementById('intro-video-url').value = data.introVideoUrl || '';
+        document.getElementById('intro-video-url-2').value = data.introVideoUrl2 || '';
         document.getElementById('syllabus-doc-url').value = data.syllabusDocUrl || '';
 
         // Load days structure
@@ -1123,6 +1145,35 @@
     }
 
     // Save Course Function
+    // Convert Internet Archive item links to direct downloadable video URLs (mp4/webm/ogg) for clean HTML5 playback
+    function extractArchiveIdentifier(url) {
+      const m = url.match(/archive\.org\/(?:details|embed|download)\/([^\/?#]+)/i);
+      return m ? m[1] : null;
+    }
+
+    async function resolveArchiveDirect(url) {
+      try {
+        const id = extractArchiveIdentifier(url);
+        if (!id) return url;
+        const metaRes = await fetch(`https://archive.org/metadata/${id}`);
+        if (!metaRes.ok) return url;
+        const meta = await metaRes.json();
+        if (!meta || !Array.isArray(meta.files)) return url;
+        // Prefer mp4, then webm, then ogg/ogv
+        const prefer = ['mp4', 'webm', 'ogv', 'ogg'];
+        let best = null;
+        for (const ext of prefer) {
+          best = meta.files.find(f => (f.format && /video/i.test(f.format)) || (f.name && f.name.toLowerCase().endsWith(`.${ext}`)));
+          if (best) break;
+        }
+        if (!best || !best.name) return url;
+        // Construct direct download URL
+        return `https://archive.org/download/${id}/${encodeURIComponent(best.name)}`;
+      } catch (e) {
+        return url; // Fallback to original
+      }
+    }
+
     async function saveCourse() {
       if (!window.firebaseServicesInitialized || !window.db) {
         showMessage('Firebase not ready. Please wait...', 'error');
@@ -1141,7 +1192,8 @@
       const price = parseFloat(document.getElementById('course-price').value);
       const objectives = document.getElementById('course-objectives').value.split(',').map(o => o.trim()).filter(Boolean);
       const featured = document.getElementById('course-featured').checked;
-      const introVideoUrl = document.getElementById('intro-video-url').value.trim();
+      let introVideoUrl = document.getElementById('intro-video-url').value.trim();
+      let introVideoUrl2 = document.getElementById('intro-video-url-2').value.trim();
       const syllabusDocUrl = document.getElementById('syllabus-doc-url').value.trim();
 
       // Validation
@@ -1155,17 +1207,15 @@
         return;
       }
 
-      const hasLectures = days.some(day => day.lectures && day.lectures.length > 0);
-      if (!hasLectures) {
-        showMessage('Please add at least one lecture.', 'error');
-        return;
-      }
 
       try {
+        // Auto-convert Internet Archive item links to direct media URLs
+        if (introVideoUrl) introVideoUrl = await resolveArchiveDirect(introVideoUrl);
+        if (introVideoUrl2) introVideoUrl2 = await resolveArchiveDirect(introVideoUrl2);
         const course = {
           title, description, instructor, image, instructorImage, instructorBio, category, level, duration, price,
           objectives, featured,
-          introVideoUrl, syllabusDocUrl,
+          introVideoUrl, introVideoUrl2, syllabusDocUrl,
           modules: days.map(day => ({
             title: day.title,
             lectures: day.lectures || [],
@@ -1179,10 +1229,8 @@
         await window.db().collection('courses').doc(courseId).set({ id: courseId, ...course }, { merge: true });
 
         showMessage('✅ Course saved successfully!');
-        
-        if (!loadedCourseId) {
-          resetForm();
-        }
+        // Keep form data; for new courses, set the loadedCourseId so subsequent saves update the same course
+        loadedCourseId = courseId;
       } catch (error) {
         showMessage('Error saving course: ' + error.message, 'error');
       }
@@ -1192,6 +1240,7 @@
       document.getElementById('course-form').reset();
       document.getElementById('search-course-id').value = '';
       document.getElementById('intro-video-url').value = '';
+      document.getElementById('intro-video-url-2').value = '';
       document.getElementById('syllabus-doc-url').value = '';
       days = [{
         title: 'Day 1',
